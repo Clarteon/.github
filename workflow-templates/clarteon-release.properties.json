@@ -1,0 +1,6 @@
+{
+  "name": "Clarteon release",
+  "description": "Run CI on a version tag, then publish a GitHub release with generated notes.",
+  "iconName": "octicon tag",
+  "categories": ["Continuous integration", "Deployment"]
+}

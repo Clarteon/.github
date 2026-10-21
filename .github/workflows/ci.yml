@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node.js version to run the checks with.
+        required: false
+        type: string
+        default: "24"
+      run-audit:
+        description: Audit production dependencies with npm audit.
+        required: false
+        type: boolean
+        default: true
+      audit-level:
+        description: Lowest vulnerability level that fails the audit.
+        required: false
+        type: string
+        default: high
+      build:
+        description: Run the build script when the repository defines one.
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+
+      - name: Check repository layout
+        shell: bash
+        run: |
+          if [ ! -f package.json ]; then
+            echo "::error::package.json not found. This pipeline expects an npm project at the repository root."
+            exit 1
+          fi
+          if [ ! -f package-lock.json ]; then
+            echo "::error::package-lock.json not found. Commit the lockfile so CI installs exactly what production installs."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Check formatting
+        run: npm run format:check --if-present
+
+      - name: Type check
+        run: npm run typecheck --if-present
+
+      - name: Test
+        run: npm run test --if-present
+
+      - name: Check placeholders
+        run: npm run check:placeholders --if-present
+
+      - name: Audit production dependencies
+        if: ${{ inputs.run-audit }}
+        shell: bash
+        env:
+          AUDIT_LEVEL: ${{ inputs.audit-level }}
+        run: |
+          for attempt in 1 2 3; do
+            if npm audit --omit=dev --audit-level="$AUDIT_LEVEL"; then
+              exit 0
+            fi
+            echo "Audit attempt ${attempt} failed; retrying in 10 seconds."
+            sleep 10
+          done
+          exit 1
+
+      - name: Build
+        if: ${{ inputs.build }}
+        run: npm run build --if-present

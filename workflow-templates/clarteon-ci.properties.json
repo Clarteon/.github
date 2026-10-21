@@ -1,0 +1,6 @@
+{
+  "name": "Clarteon CI",
+  "description": "Lint, format check, type check, tests, placeholder check, production dependency audit and build for an npm repository.",
+  "iconName": "octicon check-circle",
+  "categories": ["Continuous integration", "JavaScript", "TypeScript"]
+}
