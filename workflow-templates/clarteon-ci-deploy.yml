@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [$default-branch]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: Clarteon/.github/.github/workflows/ci.yml@v1
+
+  # Run scripts/setup-vercel-deploy.sh from Clarteon/.github once before enabling this job.
+  deploy:
+    needs: ci
+    if: github.event_name != 'workflow_dispatch'
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: Clarteon/.github/.github/workflows/vercel-deploy.yml@v1.1.0
+    secrets:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}

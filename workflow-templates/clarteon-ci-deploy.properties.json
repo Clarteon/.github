@@ -1,0 +1,6 @@
+{
+  "name": "Clarteon CI and Vercel deploy",
+  "description": "Clarteon CI, then a Vercel production deploy for main and a preview deploy with a comment for pull requests.",
+  "iconName": "octicon rocket",
+  "categories": ["Continuous integration", "Deployment", "JavaScript", "TypeScript"]
+}
