@@ -1,0 +1,148 @@
+name: Vercel deploy
+
+# Builds in GitHub Actions and uploads the output to Vercel, so private organization
+# repositories can deploy without Vercel's Git integration (not available on Hobby).
+# A push to the production branch deploys production; anything else deploys a preview.
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node.js version used for the build.
+        required: false
+        type: string
+        default: "24"
+      production-branch:
+        description: Branch whose pushes deploy to production.
+        required: false
+        type: string
+        default: main
+      vercel-cli-version:
+        description: Exact Vercel CLI version, pinned for reproducible deploys.
+        required: false
+        type: string
+        default: "64.0.2"
+    secrets:
+      VERCEL_TOKEN:
+        description: Vercel access token scoped to the team that owns the project.
+        required: true
+    outputs:
+      url:
+        description: URL of the deployment.
+        value: ${{ jobs.deploy.outputs.url }}
+      target:
+        description: production or preview.
+        value: ${{ jobs.deploy.outputs.target }}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Vercel
+    # Pull requests from forks cannot read secrets, so skip them instead of failing.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    concurrency:
+      # Deploys of the same target queue rather than cancel, so production never stops mid-upload.
+      group: >-
+        vercel-${{ github.repository }}-${{
+        github.event_name != 'pull_request' && github.ref_name == inputs.production-branch
+        && 'production' || github.ref }}
+      cancel-in-progress: false
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+      target: ${{ steps.target.outputs.target }}
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_TELEMETRY_DISABLED: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Check configuration
+        shell: bash
+        run: |
+          missing=()
+          [ -n "$VERCEL_TOKEN" ] || missing+=("secret VERCEL_TOKEN")
+          [ -n "$VERCEL_ORG_ID" ] || missing+=("variable VERCEL_ORG_ID")
+          [ -n "$VERCEL_PROJECT_ID" ] || missing+=("variable VERCEL_PROJECT_ID")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing ${missing[*]}. Run scripts/setup-vercel-deploy.sh from Clarteon/.github in this repository."
+            exit 1
+          fi
+
+      - name: Choose target
+        id: target
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BRANCH: ${{ github.ref_name }}
+          PRODUCTION_BRANCH: ${{ inputs.production-branch }}
+        run: |
+          if [ "$EVENT" != "pull_request" ] && [ "$BRANCH" = "$PRODUCTION_BRANCH" ]; then
+            echo "target=production" >> "$GITHUB_OUTPUT"
+            echo "prod_flag=--prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "target=preview" >> "$GITHUB_OUTPUT"
+            echo "prod_flag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+
+      - name: Install Vercel CLI
+        run: npm install --global "vercel@${{ inputs.vercel-cli-version }}"
+
+      - name: Pull project settings and environment
+        run: vercel pull --yes --environment="${{ steps.target.outputs.target }}" --token="$VERCEL_TOKEN"
+
+      - name: Build
+        run: vercel build ${{ steps.target.outputs.prod_flag }} --token="$VERCEL_TOKEN"
+
+      - name: Deploy
+        id: deploy
+        shell: bash
+        run: |
+          url=$(vercel deploy --prebuilt --archive=tgz ${{ steps.target.outputs.prod_flag }} --token="$VERCEL_TOKEN")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Vercel ${{ steps.target.outputs.target }} deployment"
+            echo
+            echo "- URL: $url"
+            echo "- Commit: \`${GITHUB_SHA::7}\`"
+            echo "- Roll back from the Vercel dashboard with Instant Rollback if needed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment preview URL on the pull request
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.deploy.outputs.url }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          marker="<!-- clarteon-vercel-preview -->"
+          body="${marker}
+          **Vercel preview:** ${URL}
+
+          Commit \`${GITHUB_SHA::7}\`. Previews are not indexed by search engines."
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n 1)
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="$body" >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" >/dev/null
+          fi
