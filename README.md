@@ -116,8 +116,8 @@ immediately after merge.
   to create a release.
 - Callers reference the reviewed `v1` tag. Moving the tag is an intentional change made from `main`
   after a consumer run passes.
-- This repository is public so GitHub can offer the starter templates to the organization. It contains no
-  application code, credentials or visitor data.
+- This repository is public so every repository in the organization can call the workflows and use the
+  templates without extra access settings. It contains no application code, credentials or visitor data.
 
 ## Maintaining the workflows
 
